@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # 验证 dsh 生产 bundle 的 OAuth seam patch 是否仍然生效。
 #
 # 为什么需要: dsh 升级(npm 重装 @deepseek-ai/dsh-mcp-client)会把 patch 掉的

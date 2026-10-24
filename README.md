@@ -41,6 +41,8 @@ profile 启用 `dsh-hmr` 后 MCP 改动**热生效**(自动 reconcile 对应行)
 - 授权流程:DCR 注册 → 打开授权页 → 随机 loopback 端口收回调 → 换 token → 落盘
   `~/.dsh/mcp-auth.json`。refresh token 由 SDK 自动驱动续期。
 - 主行只有「删除 + 开关」;**未授权行另起一行**(缩进 + 黄字 + 单个授权按钮)。
+  黄字按状态分级:授权超时 / 授权失败 / 探测不可达 / 常规提示 —— 提示与按钮
+  同行,用户不会把「授权已超时」误当成另一个问题。
 
 ### 安全
 API 仅 loopback 或已配对设备可访问;env/headers 中的 key/token 值列表时打码,
@@ -118,7 +120,8 @@ async function auth(provider, options) {
 - **幂等** —— 已补则只读不写,启动开销约等于一次文件读取
 - **必留备份** —— 写入前生成 `<bundle>.bak-selfheal`,内容与上游原版逐字节一致
 - **写后校验** —— 逐锚点确认,任一不符立即恢复原文件
-- **不阻塞启动** —— 延到下一 tick 执行,任何失败只记日志
+- **不阻塞启动** —— 延到下一 tick 执行,失败不抛异常;
+  但**异常状态一定会发声**(stderr + 面板红色横幅),不会静默失效
 
 > **为什么不用 `postinstall`**:npm 12 起默认阻止依赖的 install scripts
 > (需 `npm install-scripts approve`),postinstall 无法保证执行。故改为运行时自愈。
@@ -131,13 +134,15 @@ async function auth(provider, options) {
 
 ### 手工体检 / 打补丁 / 回滚
 
-脚本在 `node_modules/dsh-mcp-skill-hub/scripts/` 下(或源码目录):
+脚本在 `node_modules/dsh-mcp-skill-hub/scripts/` 下(或源码目录)。
+用 `bash <script>` 调用,不要直接 `./script.sh` —— 这样不依赖 shebang
+(Termux 没有 `/usr/bin/env`,写死解释器路径又会让 Linux/macOS 失效):
 
 ```sh
-scripts/patch-installed.sh            # dry-run 预检(只报告,不改文件)
-scripts/patch-installed.sh --apply    # 打补丁(幂等:已 patch 则跳过)
-scripts/verify-patch-applied.sh       # 体检
-scripts/rollback-installed.sh <bak-path>   # 回滚(需传 patch 时生成的 .bak 路径)
+bash scripts/patch-installed.sh                  # dry-run 预检(只报告,不改文件)
+bash scripts/patch-installed.sh --apply          # 打补丁(幂等:已 patch 则跳过)
+bash scripts/verify-patch-applied.sh             # 体检
+bash scripts/rollback-installed.sh <bak-path>    # 回滚(需传 patch 时生成的 .bak 路径)
 ```
 
 `verify-patch-applied.sh` 退出码:
@@ -172,9 +177,9 @@ GET  /api/dsh-mcp-skill-hub/oauth/callback     # 仅说明;真实回调由 /oaut
 ## 测试
 
 ```sh
-node --test test-*.mjs     # 15 个文件 / 216 用例
-./scripts/run-tests.sh    # 或跑封装好的 runner(失败时输出完整详情)
-node test.mjs              # 块编辑器 / frontmatter / 注释保留 / 真实 profile 解析
+bash scripts/run-tests.sh         # 16 个文件 / 226 用例(推荐: 失败时输出完整详情)
+# 裸 glob 会多跑 test-postinstall.mjs —— 那是 postinstall 方案的遗留
+# 测试(该方案已被 pnpm 11 卡死, 见上文「为什么不用 postinstall」), 已不打进包
 ```
 
 `test-oauth-fixture.mjs` 会起一个真实的本地 OAuth 授权服务器
@@ -184,4 +189,4 @@ node test.mjs              # 块编辑器 / frontmatter / 注释保留 / 真实 
 ## 卸载
 
 `dsh plugin --profile web remove dsh-mcp-skill-hub`,或手工:
-bundles 删一行 + 依赖删一行 + `pnpm install`。补丁可用 `rollback-installed.sh` 还原。
+bundles 删一行 + 依赖删一行 + `pnpm install`。补丁可用 `bash scripts/rollback-installed.sh <bak-path>` 还原。

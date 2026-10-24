@@ -32,10 +32,20 @@ test('源码: window.open 带 noopener,noreferrer（防反向 tabnabbing）', ()
   assert.ok(/noreferrer/.test(src), 'window.open 必须带 noreferrer')
 })
 
-test('源码: 4 个 i18n 键齐备(zh + en)', () => {
-  for (const key of ['authorize', 'authNotAuth', 'authPending', 'authOk', 'authExpired', 'authAlready', 'authFailed']) {
+test('i18n: 授权相关键齐备(zh + en 各一份)', () => {
+  for (const key of ['authorize', 'authPending', 'authOk', 'authExpired', 'authFailed', 'authProbeFailed', 'authRowHint']) {
     const hits = src.match(new RegExp(key + ':', 'g')) || []
-    assert.ok(hits.length >= 2, `键 ${key} 应有中英两份, 实际 ${hits.length}`)
+    assert.equal(hits.length, 2, `键 ${key} 应有中英各一份, 实际 ${hits.length}`)
+  }
+})
+
+test('i18n: 已废弃的死键不得复活', () => {
+  // 这 4 个键是 0.3.x 设计演变后遗留的(改用了 appliedHot/Watch/Restart 三态、
+  // 授权行提示、通用 confirmDelete), 曾在 0.3.3 逐字审核中删掉。
+  // 若有人把它们加回来, 说明要么功能退化, 要么又新增了没人调的键。
+  for (const key of ['saved:', 'authNotAuth:', 'authAlready:', 'confirmDeleteSkill:']) {
+    const hits = src.match(new RegExp(key, 'g')) || []
+    assert.equal(hits.length, 0, `死键 ${key} 又出现了(共 ${hits.length} 处) —— 确认它是被真正调用, 而不是又一次加而不用`)
   }
 })
 
@@ -394,12 +404,15 @@ test('seam: i18n 键中英齐全(8 个 seam* 键)', () => {
 test('seam: SeamBanner 对静默状态返回 null', () => {
   const src = readFileSync(CLIENT, 'utf8')
   assert.match(src, /const SeamBanner = /, '应有 SeamBanner 组件')
-  // 静默清单必须含 patched/already/not-checked/disabled/bundle-not-found/locked
+  // 静默清单必须含这 5 个(正常或无需用户动作的状态)。
+  // 刻意**不含** locked: self-heal 把「另一进程正在 patch」上报为 already,
+  // locked 是死枚举值(0.3.4 修正)。
   const m = src.match(/const silent = \[([^\]]+)\]/)
   assert.ok(m, '应定义静默状态清单')
-  for (const s of ['not-checked', 'disabled', 'bundle-not-found', 'already', 'patched', 'locked']) {
+  for (const s of ['not-checked', 'disabled', 'bundle-not-found', 'already', 'patched']) {
     assert.ok(m[1].includes(`"${s}"`), `静默清单应含 ${s}`)
   }
+  assert.ok(!m[1].includes('"locked"'), '静默清单不应含死枚举 locked')
 })
 
 test('seam: 危险横幅用 danger 样式且有对应 CSS', () => {

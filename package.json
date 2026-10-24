@@ -49,7 +49,8 @@
     "test-verify-patch.mjs",
     "test-oauth-fixture.mjs",
     "test-self-heal.mjs",
-    "test-oauth-refresh.mjs"
+    "test-oauth-refresh.mjs",
+    "test-yaml-block-parse.mjs"
   ],
   "dsh": {
     "engines": {

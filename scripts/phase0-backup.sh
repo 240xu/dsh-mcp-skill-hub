@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # 阶段备份脚本 — dsh-mcp-skill-hub
 # 用途：在任何阶段开工前创建「真实现场快照」全量备份（含 .test/ 夹具状态）。
 # 语义：备份用于回滚到真实现场，不用于重建可跑环境；不做任何清理（铁律 1、3）。

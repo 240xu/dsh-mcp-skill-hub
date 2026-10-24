@@ -25,9 +25,15 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = pjoin(HERE, 'scripts', 'verify-patch-applied.sh')
 const ORIG = '/data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js.bak-20261021T113912Z'
 
+/**
+ * 经 bash 调用, 不直接执行脚本文件:
+ * 脚本的 shebang 是 `#!/usr/bin/env bash`(Linux/macOS 可移植),
+ * 但 Termux 没有 /usr/bin/env 这个绝对路径, 直接 exec 会 ENOENT。
+ * README 教用户 `bash scripts/xxx.sh` 也是这个原因。
+ */
 function run(bundlePath) {
   try {
-    const out = execFileSync(SCRIPT, [bundlePath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    const out = execFileSync('bash', [SCRIPT, bundlePath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
     return { code: 0, out }
   } catch (e) {
     return { code: e.status, out: (e.stdout || '') + (e.stderr || '') }

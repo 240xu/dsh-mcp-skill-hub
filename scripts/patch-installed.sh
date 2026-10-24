@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # patch-installed.sh —— 对生产 bundle 精准 patch dsh-mcp-client（人执行）。
 #
 # ⚠️ 由人手动执行，不由 agent 执行（铁律 5）。

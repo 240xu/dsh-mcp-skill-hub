@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # 跑全部测试, 任何失败都输出完整详情(不丢证据)。
 #
 # --test-force-exit 必需: test-oauth-refresh.mjs / test-self-heal.mjs 起过
@@ -12,7 +12,7 @@ FILES=(
   test-auth-store.mjs test-oauth-provider.mjs test-oauth-server.mjs
   test-oauth-wiring.mjs test-oauth-ui.mjs test-oauth-reconnect.mjs
   test-verify-patch.mjs test-oauth-fixture.mjs
-  test-self-heal.mjs test-oauth-refresh.mjs
+  test-self-heal.mjs test-oauth-refresh.mjs test-yaml-block-parse.mjs
 )
 
 TOT_P=0; TOT_F=0; FAILED_FILES=""

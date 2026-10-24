@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # 回滚 mcp-client 的 bundle 至 patch-installed.sh 的备份。
 #
 # ⚠️ 由人手动执行，不由 agent 执行（铁律 5）。

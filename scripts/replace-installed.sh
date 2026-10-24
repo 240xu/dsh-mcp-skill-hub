@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # 替换安装版 @deepseek-ai/dsh-mcp-client 为 dsh-src 构建产物。
 #
 # ⚠️ 由人手动执行，不由 agent 执行（铁律 5：失败时只有本机人在场能救）。

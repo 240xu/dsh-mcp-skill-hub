@@ -86,7 +86,15 @@ function makeHarness(s, id, row) {
     route,
     patchPath: s.patchPath,
     authPath: s.authPath,
-    readMcpRows: () => ({ rows: [row] }),
+    // 0.3.4 起 readMcpRows 同时返回 rawSecrets(Map: rowId → {headers, env});
+    // 未 mask 的原值只走这条路, 不再挂在 row 上(否则会经 /state 泄露)。
+    readMcpRows: () => ({
+      rows: [row],
+      rawSecrets: new Map([[row.id, {
+        headers: row.rawHeaders || row.config?.headers || {},
+        env: row.rawEnv || row.config?.env || {},
+      }]]),
+    }),
     writeJson,
   })
   routes.push(...registered)
@@ -485,12 +493,12 @@ test('pure helpers: buildAuthorizeUrl / normalizeToken', () => {
   assert.equal(t.token_type, 'Bearer')
 })
 
-// ── 审计 M3 回归: 探测必须用 rawHeaders(未 mask), 不能用 config.headers ──
-test('M3: 探测用 rawHeaders 原值, mask 后的 config.headers 不影响 already-works 判定', async () => {
+// ── 审计 M3 回归: 探测必须用 rawSecrets 里的未 mask 原值 ──
+test('M3: 探测用未 mask 原值, mask 后的 config.headers 不影响 already-works 判定', async () => {
   const id = nextId()
   const s = sandbox(id)
-  // 模拟 readMcpRows 的真实输出: config.headers 被 mask 成 '•••',
-  // 真值只在 rawHeaders 里。带静态 Token 的行应被判 already-works。
+  // 模拟 readMcpRows 的真实输出(0.3.4): config.headers 被 mask 成 '•••',
+  // 真值只在随返回值单列的 rawSecrets 表里。带静态 Token 的行应判 already-works。
   const row = {
     id,
     config: { url: 'https://demo.example.com/mcp', headers: { Authorization: '•••' } },
@@ -506,6 +514,37 @@ test('M3: 探测用 rawHeaders 原值, mask 后的 config.headers 不影响 alre
     'M3: 带静态 Token 的行必须能判出 already-works, 不得被迫走 OAuth')
   assert.equal(seenHeaders?.['Authorization'], 'Bearer REAL-TOKEN',
     'M3: 探测请求必须携带未 mask 的原值(不是 •••)')
+})
+
+test('M3: 原值不得挂在 row 上(否则 /state 会泄露明文 Token)', async () => {
+  // 0.3.4 逐字审核实证的漏洞: rawHeaders/rawEnv 曾是 row 的字段, 而 /state
+  // 处理器 `out.mcp = r.rows` 把整行塞进响应体 → 任何能打 loopback API 的
+  // 调用方都能读到明文 API Token。
+  // 这个回归直接打 host 半的 readMcpRows: 它返回的 rows 序列化后不得含明文。
+  const { __internals } = await import(new URL('./lib/index.js', import.meta.url).href)
+  const { writeFileSync, mkdirSync, mkdtempSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const d = mkdtempSync(join(process.env.TMPDIR || '/tmp', 'hub-m3-'))
+  writeFileSync(join(d, 'cordis.patch.yml'), [
+    `- id: mcp-${nextId()}`,
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    '  config:',
+    '    transport: streamable-http',
+    '    url: https://demo.example.com/mcp',
+    '    headers:',
+    '      Authorization: Bearer REAL-TOKEN',
+    '',
+  ].join('\n'))
+  const r = __internals.readMcpRows(join(d, 'cordis.patch.yml'), { get: () => null })
+  const serializedRows = JSON.stringify(r.rows)
+  assert.ok(!serializedRows.includes('REAL-TOKEN'),
+    `/state 会原样返回 rows —— 其中不得含明文 Token, 实际: ${serializedRows.slice(0, 200)}`)
+  assert.ok(!('rawHeaders' in r.rows[0]), 'row 不应再有 rawHeaders 字段')
+  assert.ok(!('rawEnv' in r.rows[0]), 'row 不应再有 rawEnv 字段')
+  // 但探测路径仍要能拿到原值(功能不回归)
+  assert.ok(r.rawSecrets instanceof Map, 'readMcpRows 应随返回值单列 rawSecrets 表')
+  assert.equal(r.rawSecrets.get(r.rows[0].id)?.headers?.Authorization, 'Bearer REAL-TOKEN',
+    'rawSecrets 里必须仍能取到未 mask 原值, 否则探测全部退化成 need-auth')
 })
 
 test('M3: 无 rawHeaders 时退回 config.headers(向后兼容)', async () => {

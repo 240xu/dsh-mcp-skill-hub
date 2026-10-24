@@ -3080,3 +3080,114 @@ focusRing  : 2px solid        ← 宿主品牌色(不再硬编码 indigo)
 - 生产 dsh 已重启（PID 30511），Hub API 200
 - 当前 `mcp-cloudflare` 为 `authenticated`（token 已自动刷新），
   故授权行不显示 —— 只有真需要时才出现，符合设计
+
+---
+
+## 0.3.4 逐字审核(2026-10-24)
+
+用户指令「逐字审核」。对 GitHub 仓库 42 个文件全量审完, 输出 3 个 P0 + 若干 P1/P2/P3。
+**所有结论均附可独立复跑的命令与真实输出**, 子代理报的全部项目由主会话逐项复现后才定性。
+
+### 发现并修复的 P0(3 个)
+
+| # | 缺陷 | 影响 | 修复 |
+|---|---|---|---|
+| P0-A | `scanMcpBlocks` 的括号深度计数用**原文**, 注释里未闭合的 `[`/`{` 把 depth 永久抬高 | patch 中任意 MCP 行之前出现 `# TODO[ revisit` 这样的注释 → **所有 MCP 行从 UI 消失且无法增删改** | 计数前剥离注释; 注意 `stripComment` 要求 `#` 前有空白才算注释起点, 整行注释(# 在列 0)要单独判空 |
+| P0-B | `parseBlockFields` 的 map 子键判据只看 `currentMap` 是否置位, **不看缩进** | config 内 `headers:` 之后的 `reconnect:`/`url:` 等顶层键被吞进 headers map; `out.url` 丢失 → **保存时改写 MCP 连接目标**、未知字段错位 | 加缩进闸门 `ind > configIndent + 2`; 回到 config 直接子级时清零 map/list 态 |
+| P0-C | `rawHeaders`/`rawEnv` 未 mask 原值挂在 row 上, 而 `/state` 处理器 `out.mcp = r.rows` 整行返回 | **任何能打 loopback API 的调用方(含已配对设备)都能从 /state 读到明文 API Token** | 原值改由 `readMcpRows` 单列 `rawSecrets`(Map: rowId → {headers,env}) 返回; `/oauth/*` 探测路径经 `rawHeadersFor(id)` 按需取用 |
+
+P0-A 实证(修复前):
+```
+无注释          : 2 行 (期望 2)
+含 # TODO[      : 0 行 (期望 2)   ← 全部消失
+含 # see [docs] : 2 行 (期望 2)   ← 闭合的不受影响, 所以此前从未暴露
+```
+
+P0-B 实证(修复前):
+```
+f.url      = undefined                        (期望 https://leak.example.com/mcp)
+f.headers  = {"Authorization":"Bearer real-token","reconnect":"","enabled":"true","delayMs":"500"}
+f.enabled  = undefined
+```
+
+P0-C 实证(修复前, 端到端):
+```
+row.config.headers (masked): {"Authorization":"•••"}
+row.rawHeaders     (RAW!)   : {"Authorization":"Bearer <fixture-token>"}
+/state 响应体会含明文?  ❌ 会
+```
+修复后:
+```
+/state 响应体长度: 216
+含明文 Token: ✅ 否(已修复)
+含 mask 值 •••: ✅ 是(正确打码)
+```
+
+### 先红后绿(铁律 9)
+新增 `test-yaml-block-parse.mjs` 8 用例, 修复前 **7 红 1 绿**:
+```
+✖ P0-A: 注释含未闭合 "[" 时 MCP 行仍全部可见
+✖ P0-A: 注释出现在两个 MCP 行之间也不影响第二行
+✖ P0-B: headers 后的未知嵌套块不得吞掉 url / enabled
+✖ P0-B: headers 在 url 之前时 url 同样不得丢失
+✖ P0-B: env map 后的未知键同样不得被吞
+✖ P0-B: 未知嵌套块本身必须保留在 extraLines(回写不丢配置)
+✖ 源码: 注释必须在校验/计数前被剥离(防复发)
+```
+修复后 8/8 全绿。另在 `test-oauth-server.mjs` 补 1 个 P0-C 回归
+(`M3: 原值不得挂在 row 上`), 直接打 `readMcpRows` 断言 rows 序列化后不含明文。
+
+**过程中自己写错 2 次, 均当场纠正**:
+1. 断言 `f.enabled === true` —— 实际行级启停是块级 `disabled:` 字段, `enabled` 是
+   `buildRowLines` 的独立入参, 根本不是解析产物。改为断言 `f.disabled === false` +
+   headers 不混入。
+2. 新回归测试里引用了不存在的 `h.seenRows` 帮助方法, 回退成断言测试自己的 fixture
+   对象(等于测空气)。改为直接 `import` host 半的 `readMcpRows` 打真实代码路径。
+
+### 顺带修的小项
+- `lib/self-heal.mjs`: 删未使用的 `mkdirSync` 导入与 `shaPrefix` 函数; 删 178 行
+  永假分支(`buf.length < 1024` 已在 146 行返回过); 修 170 行注释(声称「偏差 >20%」
+  但代码里没有任何 20% 比较); 修 440 行冗余判定(`!x || x === false`); 
+  `DSH_POSTINSTALL_NO_FALLBACK` → `DSH_SELF_HEAL_NO_FALLBACK`(postinstall 方案已废弃,
+  旧名误导)。
+- `lib/index.js`: `SEAM_STATE` 注释声称「经 /oauth/status 与 /state 暴露」, 实际
+  `stateHandler` 从未带 seam 字段 → 按实际行为改正; 从枚举里删掉死值 `locked`
+  (self-heal 把它映射为 already 后才上报, 永远到不了 UI); `checkedAt` 补注释说明用途。
+- `lib/client.js`: 删 4 个死 i18n 键(`saved`/`authNotAuth`/`authAlready`/`confirmDeleteSkill`)
+  —— 均为 0.3.x 设计演变后遗留; 加测试**反向断言**防它们复活。
+  其中 `confirmDeleteSkill` 一度以为对应功能缺口, 查证后确认技能删除已有确认
+  (`confirmPath` 状态 + 确认/取消两钮, 用的是通用 `confirmDelete`), 删除键是正确的。
+- `lib/index.js`: 删空注释的 `// eslint-disable-line`。
+- **6 个 `.sh` 的 shebang**: `#!/data/data/com.termux/files/usr/bin/bash` → `#!/usr/bin/env bash`。
+  原值是我本机 Termux 路径, 公开仓库用户装在 Linux/macOS 上直接 `bad interpreter`。
+  ⚠️ 但 Termux 自己**没有 `/usr/bin/env`**(它在 `$PREFIX/bin/env`)—— 所以 README 与
+  `test-verify-patch.mjs` 全部改成 `bash script.sh` 调用, 不依赖 shebang。
+  这是「改 A 坏 B」的典型: 修跨平台时把本机搞坏了, 靠跑测试才发现(4 个 exit null)。
+- `README.md`: 测试数字 15/217 → 16/226; 脚本用法全部改 `bash scripts/xxx.sh`;
+  「任何失败只记日志」改为「异常状态一定会发声」(P0-2 后的真实行为); 补 0.3.3 授权行说明;
+  注明裸 glob 会多跑已废弃的 `test-postinstall.mjs`。
+- `scripts/run-tests.sh`: 文件清单加入 `test-yaml-block-parse.mjs`。
+- `package.json`: `files` 加入 `test-yaml-block-parse.mjs`(28 → 29 项)。
+
+### 审核中确认「不是问题」的项(避免重复排查)
+- 所有 `sk-`/`Bearer` 命中均为测试 fixture 假值(`sk-test'123`/`sk-x`/`Bearer static-token`
+  /`Bearer REAL-TOKEN`); `password`/`passwd` 命中是打码正则与 `file://` 协议校验测试。
+- 无真实邮箱、无内网 IP、无 `/home/<user>` 路径(仅 Termux 绝对路径, 部署说明必要)。
+- PROGRESS.md 脱敏彻底(唯一 `192.168.1.9` 是文档已说明的测试假 IP; `ghp_`/`gho_` 是
+  token 类型前缀而非 token 值)。
+- README 声称的 14 条 API 路由与实际注册逐一核对一致(`mcp/upsert|toggle|delete` 与
+  `skills/create|update|toggle|delete` 是合并写法)。
+
+### 复核后判定为「子代理报错」的项
+- 子代理称 `resolveRowId` 空 url 分支是 P0。复核: `getAuthProvider` 已有
+  `if (!url) return undefined` 早退, 该分支实际不可达; 且空 url 时行 id 键仍安全
+  (另一行会被同一早退挡掉)。降级为注释与代码承诺不一致, 未改。
+- 子代理称 `scanMcpBlocks` 0 行是「完全坏了」。复核: 是我第一次传参类型错了(传字符串,
+  实参要数组), 且漏了 `name: '@deepseek-ai/dsh-mcp-client'` 行 —— 与代码无关。
+  **教训: 子代理的验证脚本同样可能错, 主会话必须用自己的输入重跑一遍才定性。**
+
+### 测试与状态
+- 15 文件 226 用例(runner 口径, 不含已废弃的 test-postinstall.mjs)
+- 裸 glob 235 用例(多跑的 9 个来自废弃文件)
+- 生产 bundle sha256 仍为 `363a0265daf80558…`(未触碰)
+- 生产 profile 2 个 MCP 行解析结果与修复前一致(url 均正确)

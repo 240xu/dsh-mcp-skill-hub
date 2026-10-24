@@ -81,14 +81,14 @@ test('3. 半 patch → 补全剩余锚点', async () => {
 
 test('4. bundle 不存在 → bundle-not-found, 不抛异常', async () => {
   process.env.DSH_MCP_CLIENT_BUNDLE = join(tmp, 'nope.js')
-  process.env.DSH_POSTINSTALL_NO_FALLBACK = '1'
+  process.env.DSH_SELF_HEAL_NO_FALLBACK = '1'
   try {
     const r = await SH.selfHealOauthSeam({ autoFix: true, log: quiet })
     assert.equal(r.status, 'bundle-not-found', JSON.stringify(r))
     assert.equal(r.ok, true, '缺 bundle 不应视为失败')
   } finally {
     delete process.env.DSH_MCP_CLIENT_BUNDLE
-    delete process.env.DSH_POSTINSTALL_NO_FALLBACK
+    delete process.env.DSH_SELF_HEAL_NO_FALLBACK
   }
 })
 
