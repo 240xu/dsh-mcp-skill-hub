@@ -3018,3 +3018,59 @@ focusRing  : 2px solid        ← 宿主品牌色(不再硬编码 indigo)
 - `package.json` 补了 `repository` / `bugs` / `homepage`
 - **独立复核**：从 GitHub API 拉回 PROGRESS.md 实内容，2981 行，
   8 类敏感模式全部 0 命中
+
+---
+
+## 0.3.3 授权提示移到授权按钮同行（2026-10-24 16:00 CST）
+
+### 用户反馈
+「授权已超时,请重新点击授权」显示在 MCP 名称右侧的徽章里，而授权按钮在
+另起一行 —— 两者分居两处，用户看不出关联，以为超时是另一个问题。
+
+### 改法
+超时提示移入授权行（`dsh-hub-auth-row`），与授权按钮同行。黄字按状态分级：
+
+| 状态 | 文案 |
+|---|---|
+| `expired` | authExpired（授权已超时,请重新点击授权） |
+| `failed` | authFailed |
+| 探测不可达 | authProbeFailed |
+| 其它 | authRowHint（该服务器需要 OAuth 授权后才能使用） |
+
+同时 `AuthBadge` 不再渲染 `expired` / `failed` —— 信息已移到授权行，
+徽章再显示就是重复。主行保持「只有删除 + 开关」（用户此前的要求不变）。
+
+### 过程中抓到的真 bug（自己引入的）
+第一版把 `authRowHint` 定义在 `McpTab` **外**，却引用其内部的
+`authStatus` / `needsAuthMap` —— 渲染时直接
+`ReferenceError: authStatus is not defined`。
+
+这个 bug **测试没抓到**（测试只做源码正则，没真正渲染带该状态的行）。
+修法 + 防回归：
+1. 改成显式传参的纯函数：`authRowHint(row, t, authStatus, needsAuthMap)`
+2. 加测试锁定签名形态（4 个参数），防闭包错误复发
+3. **把该用例从源码正则改成渲染级**：monkey-patch `useState` 按调用顺序
+   注入 `authStatus`，再断言 DOM 里授权行同时含黄字与按钮
+
+渲染级验证输出（真实中文文案）：
+
+```html
+<div class="dsh-hub-row">                          ← 主行
+  <span class="dsh-hub-name">mcp-cloudflare http</span>
+  <span class="dsh-hub-desc">https://mcp.cloudflare.com/mcp</span>
+  <span class="dsh-hub-badge ok">运行中</span>
+  <button class="dsh-hub-switch on">…</button>
+  <button class="dsh-hub-btn danger">删除</button>
+</div>
+<div class="dsh-hub-row dsh-hub-auth-row">          ← 授权行(缩进)
+  <span class="dsh-hub-auth-warn">授权已超时,请重新点击授权</span>
+  <button class="dsh-hub-btn">授权</button>
+</div>
+```
+
+### 测试与发布
+- `test-oauth-ui.mjs` 38 → 40 用例；全量 **216/216 全绿**
+- 0.3.3 已发布，干净安装后包内 216/216
+- 生产 dsh 已重启（PID 30511），Hub API 200
+- 当前 `mcp-cloudflare` 为 `authenticated`（token 已自动刷新），
+  故授权行不显示 —— 只有真需要时才出现，符合设计
