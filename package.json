@@ -1,0 +1,78 @@
+{
+  "name": "dsh-mcp-skill-hub",
+  "version": "0.3.2",
+  "description": "DSH 设置页内统一管理 MCP 服务器与技能(Skills):增删改、启停、hmr 热生效,写盘保留注释。内置 OAuth 2.1 + PKCE 授权链路。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "mcp",
+    "model-context-protocol",
+    "oauth",
+    "pkce",
+    "skills"
+  ],
+  "license": "MIT",
+  "author": "240xu",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "scripts/patch-installed.sh",
+    "scripts/rollback-installed.sh",
+    "scripts/verify-patch-applied.sh",
+    "scripts/phase0-backup.sh",
+    "scripts/run-tests.sh",
+    "fixtures/",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "APPLY-RUNBOOK.md",
+    "BROWSER-AUTH-STEPS.md",
+    "oauth-provider-contract.md",
+    "oauth-reference.md",
+    "test.mjs",
+    "test-routes.mjs",
+    "test-yaml-safety.mjs",
+    "test-client-entry.mjs",
+    "test-auth-store.mjs",
+    "test-oauth-provider.mjs",
+    "test-oauth-server.mjs",
+    "test-oauth-wiring.mjs",
+    "test-oauth-ui.mjs",
+    "test-oauth-reconnect.mjs",
+    "test-verify-patch.mjs",
+    "test-oauth-fixture.mjs",
+    "test-self-heal.mjs",
+    "test-oauth-refresh.mjs"
+  ],
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.0-rc.2"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=18.8.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/240xu/dsh-mcp-skill-hub.git"
+  },
+  "bugs": "https://github.com/240xu/dsh-mcp-skill-hub/issues",
+  "homepage": "https://github.com/240xu/dsh-mcp-skill-hub#readme"
+}

@@ -1,0 +1,5 @@
+# dsh-mcp-skill-hub bundle patch:
+# 挂载本插件的 host 半(客户端半由 package.json 的 dsh.client 自动装载)。
+- insert:
+    - id: dsh-mcp-skill-hub
+      name: 'dsh-mcp-skill-hub'
