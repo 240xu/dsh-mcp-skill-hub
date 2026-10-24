@@ -2979,3 +2979,42 @@ focusRing  : 2px solid        ← 宿主品牌色(不再硬编码 indigo)
 `test-oauth-ui.mjs` 31 → **38 用例**（新增 5 个 taste：emoji / 裸 hex / 焦点环 /
 状态色 / `<select>`；再加 2 个：Icon SSR 产出 `<path>`、Icon 有常驻落点）。
 **全量 214/214 全绿**，0.3.2 干净安装后包内 214/214。
+
+---
+
+## GitHub 公开仓库（2026-10-24 15:00 CST）
+
+### 决定
+用户选：**公开仓库 + PROGRESS.md 脱敏后上传**。
+
+### 脱敏清单（上传前处理）
+| 项 | 原值 | 替换为 |
+|---|---|---|
+| 内部 IP | `154.12.85.27` / `154.219.97.128` | `<internal-ip>` / `<internal-ip-2>` |
+| LAN IP | `192.168.1.88` / `.87` | `<lan-ip>` / `<lan-ip-2>` |
+| 主机名 | `yg7499362257` / `ecsAElm8` | `<host-alias>` / `<host-alias-2>` |
+| 内部域名 | `*.sepic.space` | `<internal-host>` |
+| 邮箱 | `xusiyuanao@outlook.com` | `<redacted-email>` |
+| token/user id 片段 | `cdc6e9a5` / `QbbsesCr` / `dNQ1Ljle` | `<redacted>` |
+
+保留项（判断为无风险）：Termux 绝对路径（部署说明必要，不含凭据）、
+作者名 `240xu`（package.json 本就公开）、测试用假 IP `192.168.1.9`
+（loopback 语义，非真实内网地址）。
+
+### .gitignore 排除
+`.project-state/`（含邮箱的内部状态）、`.test/`、`*.tgz`、`*.log`、`*.bak*`。
+
+### 推送路径（github.com 被墙）
+本机 `github.com:443` 不通（133s 超时），`api.github.com` 通。
+按既定做法：`git bundle` → scp 到 wuming → 用 `ghp_` token 经
+`http.extraHeader` 不落 argv 的方式推 → **远端 token 与临时文件用完即删**。
+
+坑：`hosts.yml` 里有两个 token，第一次误抓 `gho_`（被拒
+`Permission denied to gh218`），必须取 `ghp_` 那个。
+
+### 结果
+- 仓库：<https://github.com/240xu/dsh-mcp-skill-hub>（public）
+- commit `ec78c4c`，**42 个 blob**，与本地逐字节一致
+- `package.json` 补了 `repository` / `bugs` / `homepage`
+- **独立复核**：从 GitHub API 拉回 PROGRESS.md 实内容，2981 行，
+  8 类敏感模式全部 0 命中
