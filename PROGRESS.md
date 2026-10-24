@@ -2988,18 +2988,24 @@ focusRing  : 2px solid        ← 宿主品牌色(不再硬编码 indigo)
 用户选：**公开仓库 + PROGRESS.md 脱敏后上传**。
 
 ### 脱敏清单（上传前处理）
-| 项 | 原值 | 替换为 |
-|---|---|---|
-| 内部 IP | `154.12.85.27` / `154.219.97.128` | `<internal-ip>` / `<internal-ip-2>` |
-| LAN IP | `192.168.1.88` / `.87` | `<lan-ip>` / `<lan-ip-2>` |
-| 主机名 | `yg7499362257` / `ecsAElm8` | `<host-alias>` / `<host-alias-2>` |
-| 内部域名 | `*.sepic.space` | `<internal-host>` |
-| 邮箱 | `xusiyuanao@outlook.com` | `<redacted-email>` |
-| token/user id 片段 | `cdc6e9a5` / `QbbsesCr` / `dNQ1Ljle` | `<redacted>` |
+本表只记**类型 → 占位符**，不记真实值（真实值仅存在于本地未公开副本）。
+
+| 项 | 替换为 |
+|---|---|
+| 内部 VPS 公网 IP（2 个） | `<internal-ip>` / `<internal-ip-2>` |
+| 家用 LAN IP（2 个） | `<lan-ip>` / `<lan-ip-2>` |
+| 云主机主机名（2 个） | `<host-alias>` / `<host-alias-2>` |
+| 内部域名（一族自有域名） | `<internal-host>` |
+| 个人邮箱 | `<redacted-email>` |
+| OAuth token / user id 片段（3 个） | `<redacted>` |
 
 保留项（判断为无风险）：Termux 绝对路径（部署说明必要，不含凭据）、
 作者名 `240xu`（package.json 本就公开）、测试用假 IP `192.168.1.9`
 （loopback 语义，非真实内网地址）。
+
+教训：第一版脱敏后，我又在「脱敏清单」表格的「原值」列把真实值写了回去，
+导致 GitHub 上的文件仍有 4 处命中。**脱敏文档自身也是脱敏面** ——
+已改为只记类型与占位符。
 
 ### .gitignore 排除
 `.project-state/`（含邮箱的内部状态）、`.test/`、`*.tgz`、`*.log`、`*.bak*`。
