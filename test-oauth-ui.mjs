@@ -98,8 +98,12 @@ test('渲染: AuthBadge 只显示有授权状态的行(not_authenticated/already
   const dump = (s) => flatten(renderAuthBadge(s, t)).join(' ')
   assert.match(dump('authenticated'), /authOk/)
   assert.match(dump('pending'), /authPending/)
-  assert.match(dump('expired'), /authExpired/)
-  assert.match(dump('failed'), /authFailed/)
+  // 2026-10-24: expired / failed 改由授权行的黄字承担(与授权按钮同处一行),
+  // 徽章不再显示 —— 分居两行会让用户以为「授权已超时」与授权按钮无关。
+  assert.equal(flatten(renderAuthBadge('expired', t)).join(''), '',
+    'expired 不得渲染徽章(应移到授权行黄字, 与授权按钮同行)')
+  assert.equal(flatten(renderAuthBadge('failed', t)).join(''), '',
+    'failed 不得渲染徽章(同上)')
   // 新设计: not_authenticated 由另起一行的黄字提示承担, 徽章不渲染
   assert.equal(flatten(renderAuthBadge('not_authenticated', t)).join(''), '',
     'not_authenticated 不得渲染徽章(交给 auth-row 黄字行)')
@@ -109,8 +113,7 @@ test('渲染: AuthBadge 只显示有授权状态的行(not_authenticated/already
   // tone 正确传给内层 Badge（ok = 绿, warn = 黄）
   assert.match(dump('authenticated'), /tone=ok/)
   assert.match(dump('pending'), /tone=warn/)
-  assert.match(dump('expired'), /tone=warn/)
-  assert.match(dump('failed'), /tone=danger/)
+  // expired/failed 已无徽章(见上), tone 断言随之移除
   // 未知/空状态 → 不渲染（null 拍平为空串）
   assert.equal(flatten(renderAuthBadge('nonsense', t)).join(''), '')
   assert.equal(flatten(renderAuthBadge(undefined, t)).join(''), '')
@@ -498,4 +501,63 @@ test('taste: Icon 有常驻渲染落点(hmr 徽章), 不会永远不出现', () 
   assert.match(src, /state\.hmr\s*\n?\s*\?\s*react_jsx_runtime\.jsxs\("span", \{ className: "dsh-hub-badge ok"/,
     'hmr 徽章应是 Icon 的常驻落点')
   assert.match(src, /Icon, \{ name: "zap"/, '应使用 zap 图标')
+})
+
+test('授权行: expired 时黄字与授权按钮同行(渲染级验证)', async () => {
+  // 渲染级: 注入 authStatus={mcp-cloudflare:'expired'} 后,
+  // auth-warn 的文本必须是 authExpired, 且与授权按钮在同一个 .dsh-hub-auth-row 内。
+  const { createRequire } = await import('node:module')
+  const FE_NM = '/data/data/com.termux/files/home/smartlearn-ai/frontend/node_modules'
+  let html = null
+  try {
+    const req = createRequire(join(FE_NM, 'index.js'))
+    const React = req('react')
+    const jsx = req('react/jsx-runtime')
+    const rds = req('react-dom/server')
+    // useState 按调用顺序注入: editing / confirmRow / authStatus / needsAuthMap / seamState / authBusy
+    const injected = [null, null, { 'mcp-cloudflare': 'expired' }, {}, null, null]
+    let n = 0
+    const patched = Object.assign({}, React, {
+      useState: (init) => { const v = injected[n] !== undefined ? injected[n] : (typeof init === 'function' ? init() : init); n++; return [v, () => {}] },
+    })
+    const start = src.indexOf('//#region 通用控件')
+    const end = src.indexOf('\t\tfunction SkillsTab(')
+    const factory = new Function('react', 'react_jsx_runtime', src.slice(start, end) + '\nreturn { McpTab }')
+    const { McpTab } = factory(patched, jsx)
+    const t = (k) => k
+    const state = {
+      mcp: [{ id: 'mcp-cloudflare', editable: true, live: true, enabled: true, config: { transport: 'streamable-http', url: 'https://x/mcp' } }],
+      mcpAvailable: true, mcpError: '', busy: false, hmr: true, tab: 'mcp',
+      skills: [], skillsAvailable: true, skillsError: '',
+    }
+    const actions = { reload(){}, toggleMcp(){}, upsertMcp(){}, deleteMcp(){}, setTab(){}, createSkill(){}, updateSkill(){}, toggleSkill(){}, deleteSkill(){} }
+    html = rds.renderToStaticMarkup(React.createElement(McpTab, { state, t, actions }))
+  } catch (e) { html = null }
+  if (!html) return   // 无前端依赖环境时跳过
+  // 授权行存在, 且黄字是 authExpired
+  assert.match(html, /dsh-hub-auth-row/, '应有授权行')
+  const rowStart = html.indexOf('dsh-hub-auth-row')
+  const rowEnd = html.indexOf('</div>', rowStart)
+  const row = html.slice(rowStart, rowEnd)
+  assert.match(row, /dsh-hub-auth-warn[^>]*>authExpired</,
+    '授权行黄字应为 authExpired')
+  assert.match(row, /<button[^>]*>authorize</, '授权按钮应在同一行内')
+  // 主行不得再出现 authExpired 徽章
+  const mainRow = html.slice(0, rowStart)
+  assert.ok(!/dsh-hub-badge[^>]*>authExpired</.test(mainRow),
+    '主行徽章不应显示 authExpired(已移到授权行)')
+})
+
+
+test('授权行: authRowHint 是显式传参的纯函数(不读 McpTab 闭包 state)', () => {
+  // 2026-10-24 踩坑: authRowHint 曾定义在 McpTab 外却引用其内部 authStatus /
+  // needsAuthMap, 渲染时直接 ReferenceError。用「签名含 4 个参数」锁定形态。
+  const m = src.match(/const authRowHint = \(([^)]*)\)/)
+  assert.ok(m, '应有 authRowHint 定义')
+  const params = m[1].split(',').map((s) => s.trim()).filter(Boolean)
+  assert.deepEqual(params, ['row', 't', 'authStatus', 'needsAuthMap'],
+    `authRowHint 应显式接收 authStatus/needsAuthMap, 实际参数: ${params.join(', ')}`)
+  // 调用点必须把两个 map 传进去
+  assert.match(src, /authRowHint\(row, t, authStatus, needsAuthMap\)/,
+    '调用点应传入 authStatus 与 needsAuthMap')
 })
