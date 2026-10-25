@@ -13,6 +13,7 @@ FILES=(
   test-oauth-wiring.mjs test-oauth-ui.mjs test-oauth-reconnect.mjs
   test-verify-patch.mjs test-oauth-fixture.mjs
   test-self-heal.mjs test-oauth-refresh.mjs test-yaml-block-parse.mjs
+  test-uninstall.mjs
 )
 
 TOT_P=0; TOT_F=0; FAILED_FILES=""

@@ -169,7 +169,14 @@ POST /api/dsh-mcp-skill-hub/oauth/start
 POST /api/dsh-mcp-skill-hub/oauth/finish
 POST /api/dsh-mcp-skill-hub/oauth/cancel
 GET  /api/dsh-mcp-skill-hub/oauth/callback     # 仅说明;真实回调由 /oauth/start 起的临时服务提供
+GET  /api/dsh-mcp-skill-hub/uninstall/plan     # 卸载计划(只读预览)
+POST /api/dsh-mcp-skill-hub/uninstall/run      # 执行卸载;body 需 {"confirm":"UNINSTALL"}
+GET  /api/dsh-mcp-skill-hub/uninstall/status   # 回看卸载 worker 的步骤日志
 ```
+
+`/uninstall/run` 校验 `confirm` 令牌,计划存在阻断项(如没有可信原版备份)时返回 409 且不执行;
+通过则返回 202 并立刻 spawn 一个**脱离本插件**的 worker(写在 `~/.dsh/` 下)——插件随后会被删、
+dsh 会被重启,worker 若活在插件进程内就会被打断。
 
 `/oauth/status` 的 `needsAuth` 是三态:`true`(探测确认 401) / `false`(不需要) /
 `"unknown"`(探测不可达,附 `probeFailed: true`)。
@@ -177,7 +184,7 @@ GET  /api/dsh-mcp-skill-hub/oauth/callback     # 仅说明;真实回调由 /oaut
 ## 测试
 
 ```sh
-bash scripts/run-tests.sh         # 16 个文件 / 226 用例(推荐: 失败时输出完整详情)
+bash scripts/run-tests.sh         # 17 个文件 / 246 用例(推荐: 失败时输出完整详情)
 # 裸 glob 会多跑 test-postinstall.mjs —— 那是 postinstall 方案的遗留
 # 测试(该方案已被 pnpm 11 卡死, 见上文「为什么不用 postinstall」), 已不打进包
 ```
@@ -188,5 +195,21 @@ bash scripts/run-tests.sh         # 16 个文件 / 226 用例(推荐: 失败时�
 
 ## 卸载
 
-`dsh plugin --profile web remove dsh-mcp-skill-hub`,或手工:
-bundles 删一行 + 依赖删一行 + `pnpm install`。补丁可用 `bash scripts/rollback-installed.sh <bak-path>` 还原。
+**推荐：设置页里的「危险区 → 完整卸载并还原」按钮。** 它一步做完两件事，因为只删插件会留下一个被改过的官方文件：
+
+1. 把 mcp-client 的 bundle 还原成上游原版（用 patch 前留下的 `.bak-*` 备份，覆盖**前**重新校验 sha256，不符就不动文件）；
+2. 移除插件本身，然后重启 dsh 让还原生效。
+
+按钮的交互是「先看计划再执行」：点「查看卸载计划」会列出还原来源、当前 sha256、安装形态（软链/副本）和将执行的每一步；没有可信的原版备份时执行按钮直接禁用并说明原因——那种情况下覆盖 bundle 是不可逆的赌博。执行需原样输入确认词，防误触。
+
+等价的手工路径（功能相同，只是要自己记顺序）：
+
+```bash
+# 1) 还原补丁
+bash scripts/rollback-installed.sh <bak-path>
+# 2) 移除插件
+dsh plugin --profile web remove dsh-mcp-skill-hub
+# 3) 重启 dsh
+```
+
+软链安装（开发态）下移除只删软链和依赖声明，源码目录不受影响。

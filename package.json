@@ -50,7 +50,8 @@
     "test-oauth-fixture.mjs",
     "test-self-heal.mjs",
     "test-oauth-refresh.mjs",
-    "test-yaml-block-parse.mjs"
+    "test-yaml-block-parse.mjs",
+    "test-uninstall.mjs"
   ],
   "dsh": {
     "engines": {

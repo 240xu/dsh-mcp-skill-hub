@@ -3191,3 +3191,103 @@ row.rawHeaders     (RAW!)   : {"Authorization":"Bearer <fixture-token>"}
 - 裸 glob 235 用例(多跑的 9 个来自废弃文件)
 - 生产 bundle sha256 仍为 `363a0265daf80558…`(未触碰)
 - 生产 profile 2 个 MCP 行解析结果与修复前一致(url 均正确)
+
+## 卸载按钮 + 官方重构风险评估（2026-10-25 14:00 CST）
+
+### 起因（用户三问）
+1. 「安装会更改官方的那个配置文件，对吧？」
+2. 「官方的预览最新版是否解决了这个问题，直接官方原生能够 mcp 授权？」
+3. 「如果说安装这个会更改官方的配置文件的话，那卸载应该做一个按钮，让它安全回退到原来官方的配置。」
+
+### 一、官方最新版是否已支持原生 MCP OAuth —— 没有
+
+实测（下载 tarball 逐个 grep 锚点，非看 release note）：
+
+| 版本 | `createTransport(config)` 原版形态 | `authProvider` 透传 | 结论 |
+|---|---|---|---|
+| `@deepseek-ai/dsh-mcp-client@0.2.1-alpha.5`（本机在用） | 0（已打我方补丁） | 1 处（补丁写入） | 需补丁 |
+| `0.2.1-rc.2` | 1 | 0 | 需补丁 |
+| `0.2.1-rc.3`（npm 最新） | 1 | 0 | 需补丁 |
+
+rc.2/rc.3 的 `StreamableHTTPClientTransport` 仍不收 provider，`createTransport(config)`
+仍不接收第二个参数 —— 补丁依然必需。
+
+### 二、官方重构的影响面 —— 补丁在 rc.3 上完整适用（推翻初判）
+
+**初判错误及修正**：先 grep rc.3 发现 `mcpAuth` 字样消失，一度判定「官方删了服务，补丁
+无法工作」。复跑实测推翻：
+
+```
+rc.3 原始 bundle      : patched=false, missing=[P1, P2, P3+P4]
+rc.3 打补丁后         : status=patched, applied=[P1, P2, P3+P4]
+rc.3 打补丁后 sha256  : 363a0265daf80558…
+alpha.5 打补丁后 sha  : 363a0265daf80558…   ← 逐字节相同
+```
+
+sha 完全相同即证明官方重构没碰这三个函数。`mcpAuth` 之所以在 rc.3 里搜不到，是因为它
+**本来就不是官方代码** —— 它是补丁写进去的一行，provider 由本插件自己的
+`registerAuthService` 提供（dsh 主包 lib/dist 全树 grep `mcpAuth` 零命中，已实证）。
+即补丁只依赖 mcp-client 里那三行形态，与 dsh 主包解耦。
+
+**仍需持续盯的风险**：官方若改 `createTransport` 签名，自愈会报 `anchor-missing`
+红色横幅 + stderr 告警，不会静默失效；官方若原生支持 OAuth，补丁变多余，届时可主动停用。
+
+### 三、卸载按钮（TDD，20 用例先红后绿）
+
+**设计定案（用户选「完整卸载 + 还原补丁」）**：设置页常驻「危险区」，两个 Tab 之外
+（卸载与「当前在看哪个 Tab」无关）。
+
+- `lib/uninstall.js`：纯逻辑 + 路由 + worker 源码生成。
+- 三条路由：`GET /uninstall/plan`（只读预览）、`POST /uninstall/run`（需
+  `{"confirm":"UNINSTALL"}`，202 后立刻返回）、`GET /uninstall/status`（回看步骤日志）。
+- **安全不变量**：
+  1. 先校验备份 sha256 与 sidecar 记录一致，**不符就不动 bundle** —— 否则备份损坏会把
+     「半 patched」写死进 bundle 且再无原版可拿；
+  2. 原子替换：同目录临时文件 + `renameSync`；
+  3. 计划有阻断项（无可信备份 / bundle 不存在 / 插件已不在）→ 409 且不 spawn；
+  4. worker 必须是**脱离插件的独立文件**（写在 `~/.dsh/`）—— 卸载由插件自己的路由触发，
+     而插件随后会被删、dsh 会重启，worker 活在插件进程内必被打断；
+  5. `confirm` 令牌只活在路由层，不进 worker 参数（白名单字段）；
+  6. worker 不接触任何凭据字段（accessToken/client_secret/code_verifier）。
+
+**安装形态兼容**：`pnpm remove` 对软链（开发态，只删软链+依赖声明，源码不动）与副本
+（发布态）都适用；计划里如实报告是哪种。
+
+### 四、实测踩中并修掉的真 bug
+
+**`plan` 是 async 但路由同步调用**：`findBundle()` 是 async（P1-5 用 execFile 避免冻结
+dsh 事件循环），`findBundle() || fallback` 拿到 Promise（truthy）直接传给
+`planUninstall`，被类型闸门拒掉报「bundlePath required」，整条卸载计划不可用。
+修：路由 `await plan()` + index.js 的 plan 注入改 async 并解包 `{path}` / string 两种返回。
+回归用例：`路由: plan 为 async 时也能正常工作（回归: 未 await 会 500）`。
+
+### 五、独立验证
+
+```
+# 卸载计划路由（生产真实数据）
+$ curl -s -H "x-dsh-token: ***" http://127.0.0.1:3080/api/dsh-mcp-skill-hub/uninstall/plan
+{ "canRestore": true, "blockers": [],
+  "bundle": { "currentSha": "363a0265daf80558…", "patched": true },
+  "restoreTarget": { "path": "…index.js.bak-20261023T092048Z", "sha": "758d8fc473b700b5…" },
+  "plugin": { "installMode": "link", "linkedPath": "../../../../dsh-plugins-src/dsh-mcp-skill-hub" },
+  "dsh": { "pid": 10967 },
+  "steps": ["restore-bundle","verify-restore","remove-plugin","restart-dsh"] }
+
+# 鉴权闸门（不得误卸）
+$ curl -X POST -d '{}' …/uninstall/run            → 400
+$ curl -X POST -d '{"confirm":"yes"}' …/uninstall/run → 400
+
+# 误伤检查
+软链仍在 → ../../../../dsh-plugins-src/dsh-mcp-skill-hub
+bundle sha 仍为 363a0265daf80558…（未触碰）
+```
+
+测试：17 文件 / 246 用例全绿（runner 口径，新增 `test-uninstall.mjs` 20 用例）。
+worker 端到端用真实 fs 跑（临时目录）：可信备份 → 还原成功；备份 sha 不符 → 拒绝覆盖且
+bundle 保持原样；备份缺失 → 失败且不留临时文件。
+
+### 六、遗留
+- UI 渲染未做浏览器级实测（SPA 设置入口需多点交互，探测成本高）；已由
+  `test-oauth-ui.mjs` 41 用例覆盖键集一致性/无 emoji/字号/反向断言，且 dsh 直接加载
+  源码 `lib/client.js`（软链、无编译中间层），新代码即生效代码。
+- 未发版：npm latest 仍 0.3.3。
