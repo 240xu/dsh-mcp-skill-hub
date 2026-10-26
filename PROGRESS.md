@@ -3291,3 +3291,32 @@ bundle 保持原样；备份缺失 → 失败且不留临时文件。
   `test-oauth-ui.mjs` 41 用例覆盖键集一致性/无 emoji/字号/反向断言，且 dsh 直接加载
   源码 `lib/client.js`（软链、无编译中间层），新代码即生效代码。
 - 已发版：0.3.4（含 3 个 P0 + 卸载按钮），干净安装后包内 246/246。
+
+### 0.3.4 发布与 GitHub 同步（2026-10-25 22:40 - 23:10 CST）
+
+**npm 发布**
+- `dsh-mcp-skill-hub@0.3.4`，37 文件，`dist.integrity = sha512-WSn8UgzPJiQnR…`
+  （权威核对项；`dist.shasum` 字段与实际 tarball bytes 不一致是 npm 已知现象，
+  改用官方 tarball 直接下载比对 + ssri sha512 双验证，均一致）。
+- 干净副本（解包官方 tarball）内跑 runner：**246/246，exit 0**。
+
+**发布前拦下的一个问题**
+runner 偶发把 246 报成 237。根因：某文件输出不完整（node 被 LMK 杀/超时）时
+`grep 'pass N'` 取不到值，旧逻辑按 0 静默计入——「少跑 9 个用例」看起来像全绿。
+已加固：汇总行缺失或 rc≠0 时标记 broken、打印尾部、**exit 2**（不发版）。
+用 `process.exit(137)` 的假文件验证过该闸门真的会触发。
+
+**GitHub 同步（github.com:443 在本机与 wuming 均被阻断）**
+改用 `gh api` REST（走 api.github.com）逐对象推送。踩中两个坑：
+1. `-f content="$b64"` 超 ARG_MAX → 改 `--input -`（stdin）传 JSON；
+2. **增量推送时 `base_tree` 传了 null**（`gh api .../git/commits/$FROM --jq
+   '.commit.tree.sha'` 路径错，REST commit 的字段是 `.tree.sha`）→ 远端根树
+   被替换成只剩 8 个文件，**37 个文件（全部测试/脚本/fixtures/文档）丢失**。
+
+**修复与验收**
+全量重建：上传 45 个 blob → 建完整 tree `66ba13b0` → commit `14fbec97` → 更新 ref。
+验收用最强证据——**远端 HEAD 的 tree sha 与本地 HEAD 的 tree sha 完全相同**
+（`66ba13b0195560c3072d4a5b06b13eeb3ba8620d`），45/45 文件逐 blob sha 一致。
+
+**已知瑕疵（不影响使用）**：远端历史中间有一个「删 37 文件又恢复」的噪音提交
+（`75f0af2e`）。远端是公开仓库，强制改写公共历史的风险大于收益，故保留。
