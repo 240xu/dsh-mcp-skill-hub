@@ -14,7 +14,7 @@
  * 用一个假 bundle 文件测三种状态: 已 patch / 未 patch / 文件不存在。
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, copyFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, copyFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -23,7 +23,32 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join as pjoin } from 'node:path'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = pjoin(HERE, 'scripts', 'verify-patch-applied.sh')
-const ORIG = '/data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js.bak-20261021T113912Z'
+const INSTALLED_PATH = '/data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js'
+/**
+ * 原版样本: 动态定位, 不硬编码某次安装留下的时间戳备份。
+ * 2026-11-06: 硬编码的 .bak-20261021T113912Z 被 dsh 升级清掉后, 本文件
+ * 三个用例直接 ENOENT —— 测试依赖生产目录的历史残留是脆弱设计。
+ */
+function pickOrig() {
+  const cands = [INSTALLED_PATH + '.bak-selfheal']
+  try {
+    const dir = INSTALLED_PATH.slice(0, INSTALLED_PATH.lastIndexOf('/'))
+    const base = INSTALLED_PATH.slice(INSTALLED_PATH.lastIndexOf('/') + 1)
+    for (const n of readdirSync(dir)) {
+      if (n.startsWith(base + '.bak-') && !n.endsWith('.sha256') && !n.endsWith('.bak-selfheal')) {
+        cands.push(dir + '/' + n)
+      }
+    }
+  } catch {}
+  for (const c of cands) if (existsSync(c)) return c
+  return null
+}
+const ORIG = pickOrig()
+if (!ORIG) {
+  // 没有原版备份就无从验证「未 patch / 半 patch」两种形态, 明确 skip 而非崩溃
+  console.error('SKIP: 未找到 dsh-mcp-client 的原版备份(.bak-selfheal / .bak-<ts>)')
+  process.exit(0)
+}
 
 /**
  * 经 bash 调用, 不直接执行脚本文件:
@@ -44,7 +69,7 @@ const dir = mkdtempSync('/data/data/com.termux/files/usr/tmp/opencode/vp-')
 
 test('已 patch 的 bundle → exit 0 + 报告 PATCHED', () => {
   const p = join(dir, 'patched.js')
-  copyFileSync(ORIG.replace('.bak-20261021T113912Z', ''), p)  // 生产版(已 patch)
+  copyFileSync(INSTALLED_PATH, p)  // 生产版(已 patch)
   const r = run(p)
   assert.equal(r.code, 0, `应 exit 0, 实际 ${r.code}: ${r.out}`)
   assert.match(r.out, /PATCHED|已patch/, '应报告已 patch')

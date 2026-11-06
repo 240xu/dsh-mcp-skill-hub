@@ -3320,3 +3320,53 @@ runner 偶发把 246 报成 237。根因：某文件输出不完整（node 被 L
 
 **已知瑕疵（不影响使用）**：远端历史中间有一个「删 37 文件又恢复」的噪音提交
 （`75f0af2e`）。远端是公开仓库，强制改写公共历史的风险大于收益，故保留。
+
+## 0.3.5 过期 token 主动续期（2026-11-06 20:00 - 21:00 CST）
+
+### 用户报告与判定
+用户看到 `mcp-cloudflare` 显示「授权掉了」，要求「那就自动换新啊，为什么搞的怎么还要我
+重新点一次？不要这样设计啊，这设计的真是，提升一下 ux」。
+
+用户判断正确，这是设计缺陷。原实现把续期完全交给 SDK 的懒触发路径：只有**真正连接 MCP
+并收到 401** 才会走 `auth()` 里的 refresh_token 分支。后果：
+- 一个没人使用的 MCP 行永远不发请求 → 永远不续 → UI 长期停在「过期」；
+- UI 只能提示「请重新授权」，把本可自动完成的事推给用户。
+
+实测确认：`mcp-cloudflare` 的 token 于 2026-11-05 16:56 到期，到 11-06 19:59 已过期
+约 27 小时，而 refreshToken 与 clientId 都在 store 里、完全可续。
+
+### 修复
+provider 新增 `ensureFreshTokens()`（**非 SDK 成员**），token 剩余有效期 < 5 分钟且有
+refreshToken 时同步换新并写回 store；`/oauth/status` 在每次轮询时调用它 —— UI 每 10s
+轮询一次，这就是天然且零额外的续期时机，用户不再需要点任何按钮。
+
+关键设计取舍：**没有把续期塞进 `provider.tokens()`**。它是 SDK 的**同步**契约成员
+（28 个既有用例同步读取它），改成 async 会破坏兼容（实测：5 个测试文件崩成「输出不
+完整」）。续期放在 Hub 侧显式入口，效果等价且不动契约。
+
+其他保障：
+- 并发去重：同一 provider 的并发续期共享一个 Promise —— 轮换型 refreshToken 被并发
+  使用会互相作废；
+- 失败不抛：返回 false 并交回原 token，由 401 走已有的交互式授权兜底；
+- token 端点发现：`oauth-protected-resource` → `oauth-authorization-server` → 同源
+  `/token` 三级回退，结果缓存 5 分钟。
+
+### 验证（真实环境，非模拟）
+```
+续期前: expiresAt = 2026-11-05 16:56 (已过期 27h), status = expired
+调一次 GET /oauth/status?id=mcp-cloudflare
+续期后: expiresAt = 2026-11-06 21:33,      status = authenticated
+```
+用户未点击任何按钮。`mcp-cf-radar` 仍为 expired 属合理边界：它 `hasTokens=false`，
+从来没有可续的 token，必须一次性授权。
+
+### 顺带修掉的测试脆弱性
+`test-self-heal.mjs` / `test-verify-patch.mjs` 硬编码了 `.bak-20261021T113912Z` 这个
+由某次安装脚本留下的时间戳备份。dsh 升级清理该文件后，两个文件在**模块顶层**就 ENOENT
+崩溃（runner 加固后如实报「输出不完整」而不是假装 0 用例通过）。已改为动态定位
+`.bak-selfheal` → 任意 `.bak-<ts>` → 明确 skip，不再依赖生产目录的历史残留。
+
+### 测试
+254 用例全绿（新增 `test-oauth-proactive-refresh.mjs` 8 用例：过期续期 / 临期提前续 /
+有效不打扰 / 失败降级 / 无 refreshToken 不尝试 / 并发只续一次 / 过期 expires_in 为 0 /
+端到端 status 轮询触发续期）。

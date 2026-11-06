@@ -19,7 +19,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, copyFileSync, writeFileSync, rmSync, readFileSync, existsSync, appendFileSync, utimesSync } from 'node:fs'
+import { mkdtempSync, copyFileSync, writeFileSync, rmSync, readFileSync, existsSync, appendFileSync, utimesSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const HERE = import.meta.dirname
@@ -27,7 +27,34 @@ const SH = await import(join(HERE, 'lib', 'self-heal.mjs'))
 const { ANCHORS } = SH
 
 const INSTALLED = '/data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js'
-const ORIG_BAK = INSTALLED + '.bak-20261021T113912Z'
+
+/**
+ * 原版样本来源(按优先级)。
+ *
+ * 2026-11-06 修: 这里原先硬编码 `.bak-20261021T113912Z` —— 一个由某次安装
+ * 脚本留下的时间戳备份。dsh 升级/清理后该文件消失, 整个测试文件在模块顶层
+ * 就 ENOENT 崩掉(runner 报「输出不完整」, 看起来像 0 个用例)。测试不该
+ * 依赖生产目录里某个特定历史文件是否存在。
+ *
+ * 现在的口径: 依次尝试 self-heal 备份 → 任意 .bak-<ts> → 都没有就用当前
+ * 安装文件(此时「原版」等于「已 patch」, 依赖原版形态的用例会自行 skip)。
+ */
+function pickOriginalBackup() {
+  const candidates = [INSTALLED + '.bak-selfheal']
+  try {
+    const dir = INSTALLED.slice(0, INSTALLED.lastIndexOf('/'))
+    const base = INSTALLED.slice(INSTALLED.lastIndexOf('/') + 1)
+    for (const n of readdirSync(dir)) {
+      if (n.startsWith(base + '.bak-') && !n.endsWith('.sha256') && !n.endsWith('.bak-selfheal')) {
+        candidates.push(dir + '/' + n)
+      }
+    }
+  } catch {}
+  for (const c of candidates) { if (existsSync(c)) return c }
+  return null
+}
+const ORIG_BAK = pickOriginalBackup() ?? INSTALLED
+const HAS_PRISTINE = existsSync(ORIG_BAK) && ORIG_BAK !== INSTALLED
 
 const tmp = mkdtempSync('/data/data/com.termux/files/usr/tmp/opencode/sh-')
 const patchedPath = join(tmp, 'patched.js')
