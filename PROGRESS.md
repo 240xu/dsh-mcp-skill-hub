@@ -3429,3 +3429,45 @@ ctx.tools.register(createMcpToolDefinition(ctx, {...}))       // dsh 公开导�
 268 用例全绿（新增 `test-native-mcp.mjs` 14 用例：工具名归一化/碰撞消解、列表
 规范化、buildToolOptions、真实 HTTP MCP 端到端连接+注册+调用、close 注销、401
 优雅失败、authProvider 注入、错误信息不含 query token）。
+
+## 0.3.7 全量迁移到原生层 + 官方 bundle 归零（2026-11-08 19:10 - 19:55 CST）
+
+### 补上迁移的前置条件：自动重连
+迁移前实测到 `[native-mcp:exa] connect failed: This operation was aborted` 后该行
+永久停留在 failed 直到下次重启。官方 mcp-client 是有重连的，若我们没有，
+迁移 OAuth 行就是**降级**。故先补：
+
+- `lib/native-retry.js`：`isRetriable` / `backoffDelay` / `describeRetry`。
+  指数退避 + 全抖动（防多行齐步重连的惊群），封顶 5 分钟。
+- `lib/native-mcp-manager.js`：把 manager 从 index.js 搬出（重连是有状态的，
+  藏在 apply 里无法单测）。用**代次**（generation）作废陈旧回调，`stopAll` 幂等。
+- 鉴权错误**不重试**：401/403 需要人工介入，重试只会刷上游并掩盖「待授权」状态。
+
+**踩坑（已加回归用例）**：SDK 收到 401 会先尝试 OAuth discovery，失败后把原始
+401 包成顶层 `fetch failed`，此时顶层没有 status。只看顶层会把「需要授权」
+误判成网络抖动而无限重试。`isRetriable` 现在穿透 `cause`/`error` 链最多 6 层。
+
+### 逐行灰度迁移（每步都重启实测）
+| 行 | 类型 | 迁移结果 |
+|---|---|---|
+| mcp-exa-search | 公开 | 2 工具 |
+| mcp-cloudflare | **OAuth** | 4 工具（docs/search/execute/whoami） |
+| mcp-context7 | 公开 | 2 工具 |
+| mcp-parallel-search | 公开 | 3 工具 |
+| mcp-cf-docs | 公开 | 2 工具 |
+| mcp-cf-radar | OAuth，未授权 | 记为 failed:Unauthorized（不重试，等人工授权） |
+
+**5/6 接管，13 工具全注册，0 注册失败。**
+
+### 官方 bundle 归零
+把 `@deepseek-ai/dsh-mcp-client/lib/index.js` 从 patched（`ec2452f2…`）还原为
+官方原版（`64dfc912…`，`mcpAuth` 与 `authProvider` 透传均为 0 处），重启后
+**原生层照常注册 13 个工具** —— 这是「不再依赖 patch」的终极证据。
+
+同时：
+- `scheduleOauthSeamSelfHeal()` 默认不再执行（仅当 `config.seamSelfHeal === true`）。
+- `scripts/postinstall.mjs` 默认**不再 patch**，需 `DSH_SKILL_HUB_PATCH_BUNDLE=1` 才走旧路。
+- patched 版另存 `~/.dsh/backups/mcp-client-patched-20261108T194349.js` 可随时回滚。
+
+### 测试
+289 用例（+21：native-retry 14、native-manager 7）。干净 tarball 验证 exit 0。

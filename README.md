@@ -13,11 +13,14 @@ dsh plugin --profile web add dsh-mcp-skill-hub     # 双端同命令
 ```
 
 装完重启 profile,**全部功能即可用,无需任何手工步骤**。
-(含 OAuth:插件启动时会自动为 dsh 的 mcp-client 补上 seam 补丁,见下文。)
 
-> 为什么不用 `postinstall`:npm 12 起默认阻止依赖的 install scripts,
-> pnpm 11 遇 `scripts.postinstall` 更会以 `ERR_PNPM_IGNORED_BUILDS` 把
-> `dsh plugin add` 卡到 exit 1。故补丁改由 dsh 启动时自愈。
+> **不改官方文件**。0.3.6 起 OAuth 由插件自己的原生连接层承担:直接使用
+> `StreamableHTTPClientTransport({ authProvider })` 与公开导出的
+> `createMcpToolDefinition`,自己 `ctx.tools.register`。因此 dsh 升级永远不会
+> 弄坏 OAuth,卸载也不需要还原任何东西。
+>
+> 0.3.5 及更早版本会改写 `@deepseek-ai/dsh-mcp-client` 的编译产物(seam patch)。
+> 该能力仅为兼容旧部署保留,需显式 `DSH_SKILL_HUB_PATCH_BUNDLE=1` 才会启用。
 
 ## 功能
 
@@ -48,12 +51,32 @@ profile 启用 `dsh-hmr` 后 MCP 改动**热生效**(自动 reconcile 对应行)
 API 仅 loopback 或已配对设备可访问;env/headers 中的 key/token 值列表时打码,
 编辑回传 `•••` 哨兵 = 保留原值;技能路径全部白名单校验。
 
-## OAuth 补丁(自动,通常无需操心)
+## OAuth 实现(原生,不碰官方文件)
 
-### 为什么需要它
+### 为什么不用官方 mcp-client
 
-**DSH 的上游 mcp-client 没有把 `authProvider` 透传给 MCP SDK**,所以 SDK 内置的
-整套 OAuth 自动流程收不到 provider,处于「断线」状态。
+**dsh 上游的 mcp-client 没有把 `authProvider` 透传给 MCP SDK**,所以如果沿用它,
+OAuth 永远连不上。0.3.6 起改为自己建立连接:
+
+```js
+new StreamableHTTPClientTransport(new URL(url), { authProvider })  // SDK 公开构造
+ctx.tools.register(createMcpToolDefinition(ctx, { ... }))          // dsh 公开导出
+```
+
+好处是插件不修改任何官方文件,升级与卸载都不再有补丁相关的连带风险。
+
+### 接管判据
+
+只有 patch 里 `disabled: true` 的 `streamable-http` 行才由本插件接管。
+若某行在 `nativeTakeover` 配置里被点名、但在 dsh 侧仍然启用,**插件会拒绝接管**
+并告警 —— 两层同时注册会让同名工具互相覆盖,表现为调用随机失败。
+
+### 自动重连
+
+上游瞬时不可用(5xx / 网络中断)会指数退避重连,封顶 5 分钟。
+**401/403 不重试**:那需要你在面板里完成一次授权,重试只会掩盖这个状态。
+`/state` 的 `native` 字段会显示 `active` / `retrying` / `failed` 以及每行
+已注册的工具名,便于判断工具为何没出现。
 
 三方分工:
 
@@ -99,46 +122,20 @@ async function auth(provider, options) {
 }
 ```
 
-补丁只改 3 处(seam 最小改动):
+### 旧版补丁(0.3.5 及更早,仅归档)
 
-```diff
--function createTransport(config) {
-+function createTransport(config, authProvider) {
-   case "streamable-http": return new StreamableHTTPClientTransport(new URL(config.url),
--    { requestInit: { headers: config.headers } });
-+    { requestInit: { headers: config.headers }, authProvider });
+0.3.5 及更早为了把 `authProvider` 透传给 SDK,会改写官方 bundle 的
+`createTransport` / `createMcpToolDefinition` 等 3 处函数。0.3.6 起不再需要,
+代码与脚本保留仅供已部署的老版本排障。
 
--      transport = createTransport(config);
-+      const authProvider = ctx.get("mcpAuth", false)?.getAuthProvider(config.serverName, config);
-+      transport = createTransport(config, authProvider);
-```
-
-### 自动补(默认行为)
-
-插件每次启动时会检测这个 seam,**缺失就自动补**(`lib/self-heal.mjs`):
-
-- **幂等** —— 已补则只读不写,启动开销约等于一次文件读取
-- **必留备份** —— 写入前生成 `<bundle>.bak-selfheal`,内容与上游原版逐字节一致
-- **写后校验** —— 逐锚点确认,任一不符立即恢复原文件
-- **不阻塞启动** —— 延到下一 tick 执行,失败不抛异常;
-  但**异常状态一定会发声**(stderr + 面板红色横幅),不会静默失效
-
-> **为什么不用 `postinstall`**:npm 12 起默认阻止依赖的 install scripts
-> (需 `npm install-scripts approve`),postinstall 无法保证执行。故改为运行时自愈。
-
-若补丁与当前 dsh 版本不匹配(升级后锚点漂移)或 bundle 损坏,面板顶部会出现
-**红色横幅**说明原因 —— 不会像早期版本那样静默失效。
-
-不想让它自动改第三方包可设 `DSH_MCP_SKILL_HUB_NO_SELF_HEAL=1`(只检测不补),
-或手工跑下面的脚本。
-
-### 手工体检 / 打补丁 / 回滚
+### 手工体检 / 打补丁 / 回滚(旧版)
 
 脚本在 `node_modules/dsh-mcp-skill-hub/scripts/` 下(或源码目录)。
 用 `bash <script>` 调用,不要直接 `./script.sh` —— 这样不依赖 shebang
 (Termux 没有 `/usr/bin/env`,写死解释器路径又会让 Linux/macOS 失效):
 
 ```sh
+# 以下仅适用于仍在使用旧 patch 方案的部署:
 bash scripts/patch-installed.sh                  # dry-run 预检(只报告,不改文件)
 bash scripts/patch-installed.sh --apply          # 打补丁(幂等:已 patch 则跳过)
 bash scripts/verify-patch-applied.sh             # 体检
@@ -181,10 +178,14 @@ dsh 会被重启,worker 若活在插件进程内就会被打断。
 `/oauth/status` 的 `needsAuth` 是三态:`true`(探测确认 401) / `false`(不需要) /
 `"unknown"`(探测不可达,附 `probeFailed: true`)。
 
+`/state` 的 `native` 字段是原生连接层的实时状态:
+`active`(已连通的行) / `retrying`(退避中) / `failed`(放弃,通常是待授权) /
+`tools`(每行已注册的工具名与注册失败详情)。工具没出现时先看这里。
+
 ## 测试
 
 ```sh
-bash scripts/run-tests.sh         # 17 个文件 / 246 用例(推荐: 失败时输出完整详情)
+bash scripts/run-tests.sh         # 20 个文件 / 289 用例(推荐: 失败时输出完整详情)
 # 裸 glob 会多跑 test-postinstall.mjs —— 那是 postinstall 方案的遗留
 # 测试(该方案已被 pnpm 11 卡死, 见上文「为什么不用 postinstall」), 已不打进包
 ```
@@ -193,23 +194,23 @@ bash scripts/run-tests.sh         # 17 个文件 / 246 用例(推荐: 失败时�
 (`fixtures/oauth-test-mcp.mjs`,与 Cloudflare 协议同构)做端到端验证——
 不用 mock,因为 mock 抓不到协议级缺陷(如 authUrl 缺 `client_id` 这类时序 bug)。
 
+`test-native-mcp.mjs` 与 `test-native-manager.mjs` 同样起真实 HTTP MCP 服务器,
+覆盖:工具名归一化与碰撞消解、真实连接+注册+调用、close 注销、401 优雅失败、
+authProvider 注入、退避重连、鉴权错误不重试。
+
 ## 卸载
 
-**推荐：设置页里的「危险区 → 完整卸载并还原」按钮。** 它一步做完两件事，因为只删插件会留下一个被改过的官方文件：
-
-1. 把 mcp-client 的 bundle 还原成上游原版（用 patch 前留下的 `.bak-*` 备份，覆盖**前**重新校验 sha256，不符就不动文件）；
-2. 移除插件本身，然后重启 dsh 让还原生效。
-
-按钮的交互是「先看计划再执行」：点「查看卸载计划」会列出还原来源、当前 sha256、安装形态（软链/副本）和将执行的每一步；没有可信的原版备份时执行按钮直接禁用并说明原因——那种情况下覆盖 bundle 是不可逆的赌博。执行需原样输入确认词，防误触。
-
-等价的手工路径（功能相同，只是要自己记顺序）：
+**没有需要还原的东西。** 0.3.6 起插件不修改任何官方文件，所以卸载就是删插件：
 
 ```bash
-# 1) 还原补丁
-bash scripts/rollback-installed.sh <bak-path>
-# 2) 移除插件
 dsh plugin --profile web remove dsh-mcp-skill-hub
-# 3) 重启 dsh
+# 重启 dsh
 ```
 
-软链安装（开发态）下移除只删软链和依赖声明，源码目录不受影响。
+设置页的「危险区 → 完整卸载」仍然可用，它会做三件事：把 patch 里被接管的行
+重新启用（交回 dsh）、移除插件、重启。之所以要「重新启用」，是因为接管时这些行
+被写成了 `disabled: true` —— 不还原的话，卸载后这些 MCP 服务器会从 dsh 里消失。
+
+如果该 profile 从未用过 0.3.5 及更早的补丁版本，面板不会显示还原步骤。
+
+

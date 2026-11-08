@@ -17,6 +17,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, copyFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
+import * as SH from './lib/self-heal.mjs'
 import assert from 'node:assert/strict'
 
 import { fileURLToPath } from 'node:url'
@@ -67,9 +68,14 @@ function run(bundlePath) {
 
 const dir = mkdtempSync('/data/data/com.termux/files/usr/tmp/opencode/vp-')
 
-test('已 patch 的 bundle → exit 0 + 报告 PATCHED', () => {
+test('已 patch 的 bundle → exit 0 + 报告 PATCHED', async () => {
   const p = join(dir, 'patched.js')
-  copyFileSync(INSTALLED_PATH, p)  // 生产版(已 patch)
+  // 0.3.6 起生产 bundle 默认是官方原版, 不能直接当"已 patch"夹具。
+  // 用自愈模块对临时副本打一次, 得到稳定的已 patch 输入。
+  copyFileSync(ORIG, p)
+  process.env.DSH_MCP_CLIENT_BUNDLE = p
+  try { await SH.selfHealOauthSeam({ autoFix: true, log: () => {} }) }
+  finally { delete process.env.DSH_MCP_CLIENT_BUNDLE }
   const r = run(p)
   assert.equal(r.code, 0, `应 exit 0, 实际 ${r.code}: ${r.out}`)
   assert.match(r.out, /PATCHED|已patch/, '应报告已 patch')

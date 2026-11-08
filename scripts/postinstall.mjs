@@ -146,6 +146,13 @@ function patchBundle(bundlePath) {
 
 // ── main ──
 function main() {
+  // 0.3.6 起原生连接层只用公开 API, **不需要**改官方 bundle。
+  // 保留打补丁的能力只为兼容旧部署: 用户必须显式 opt-in。
+  if (process.env.DSH_SKILL_HUB_PATCH_BUNDLE !== '1') {
+    console.log('[dsh-mcp-skill-hub] postinstall: 原生 OAuth 已启用, 官方 bundle 保持不变')
+    console.log('  (不再 patch @deepseek-ai/dsh-mcp-client; 需要旧行为请设 DSH_SKILL_HUB_PATCH_BUNDLE=1)')
+    return 0
+  }
   const found = findBundle()
   if (!found) {
     console.log('[dsh-mcp-skill-hub] postinstall: 未找到 dsh 的 mcp-client bundle')

@@ -59,14 +59,31 @@ const HAS_PRISTINE = existsSync(ORIG_BAK) && ORIG_BAK !== INSTALLED
 const tmp = mkdtempSync('/data/data/com.termux/files/usr/tmp/opencode/sh-')
 const patchedPath = join(tmp, 'patched.js')
 const pristinePath = join(tmp, 'pristine.js')
-copyFileSync(INSTALLED, patchedPath)
 copyFileSync(ORIG_BAK, pristinePath)
+// 0.3.6 起生产 bundle 默认是官方原版, 不能直接当"已 patch"夹具。
+// 现场对临时副本打一次, 得到稳定的已 patch 输入。
+{
+  const seed = join(tmp, 'seed.js')
+  copyFileSync(ORIG_BAK, seed)
+  process.env.DSH_MCP_CLIENT_BUNDLE = seed
+  try { await SH.selfHealOauthSeam({ autoFix: true, log: () => {} }) }
+  finally { delete process.env.DSH_MCP_CLIENT_BUNDLE }
+  copyFileSync(seed, patchedPath)
+}
 
 const quiet = () => {}
 
 test('1. 已 patch → already, 且零写入(启动开销仅一次读)', async () => {
   const before = readFileSync(patchedPath, 'utf8')
-  const r = await SH.selfHealOauthSeam({ autoFix: true, log: quiet })
+  // 隔离: 不注入路径时 findBundle 会探测**真实安装**, 进而把生产 bundle 打上
+  // 补丁(实测发生过)。所有用例都必须显式指向临时副本。
+  process.env.DSH_MCP_CLIENT_BUNDLE = patchedPath
+  let r
+  try {
+    r = await SH.selfHealOauthSeam({ autoFix: true, log: quiet })
+  } finally {
+    delete process.env.DSH_MCP_CLIENT_BUNDLE
+  }
   assert.equal(r.status, 'already', JSON.stringify(r))
   assert.equal(readFileSync(patchedPath, 'utf8'), before, '已 patch 严禁改动')
   assert.ok(!existsSync(patchedPath + '.bak-selfheal'), '已 patch 不得生成备份')
@@ -180,9 +197,16 @@ test('8. 幂等: patch 后再跑一次 → already, 内容不变', async () => {
   }
 })
 
-test('9. ANCHORS 的 to 与真实 patched bundle 逐字符一致(缩进回归)', () => {
+test('9. ANCHORS 的 to 与真实 patched bundle 逐字符一致(缩进回归)', (t) => {
   if (!existsSync(INSTALLED)) return
+  // 0.3.6 起默认不再 patch 官方 bundle, 因此"已安装的 bundle 是 patched 态"
+  // 这个前提通常不成立。它只在用户显式启用旧方案时才有意义。
   const bundle = readFileSync(INSTALLED, 'utf8')
+  const isPatched = SH.ANCHORS.every((a) => bundle.includes(a.to))
+  if (!isPatched) {
+    t.skip('已安装的 bundle 是官方原版(0.3.6 默认), 锚点回归仅对旧 patch 部署适用')
+    return
+  }
   for (const a of SH.ANCHORS) {
     assert.ok(bundle.includes(a.to), `${a.id} 的 to 未出现在已 patch 的 bundle(缩进/内容漂移)`)
   }
@@ -190,7 +214,13 @@ test('9. ANCHORS 的 to 与真实 patched bundle 逐字符一致(缩进回归)',
 
 test('10. 安全: 输出不含长随机串(疑似凭据)', async () => {
   const lines = []
-  await SH.selfHealOauthSeam({ autoFix: true, log: (s) => lines.push(s) })
+  // 同样必须隔离: 否则会去 patch 真实安装的 bundle
+  process.env.DSH_MCP_CLIENT_BUNDLE = patchedPath
+  try {
+    await SH.selfHealOauthSeam({ autoFix: true, log: (s) => lines.push(s) })
+  } finally {
+    delete process.env.DSH_MCP_CLIENT_BUNDLE
+  }
   const all = lines.join('\n')
   assert.ok(!/[A-Za-z0-9_-]{40,}/.test(all), '输出不应含长随机串')
 })
