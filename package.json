@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-skill-hub",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "DSH 设置页内统一管理 MCP 服务器与技能(Skills):增删改、启停、hmr 热生效,写盘保留注释。内置 OAuth 2.1 + PKCE 授权链路。",
   "keywords": [
     "dsh",
@@ -52,7 +52,8 @@
     "test-oauth-refresh.mjs",
     "test-yaml-block-parse.mjs",
     "test-uninstall.mjs",
-    "test-oauth-proactive-refresh.mjs"
+    "test-oauth-proactive-refresh.mjs",
+    "test-native-mcp.mjs"
   ],
   "dsh": {
     "engines": {

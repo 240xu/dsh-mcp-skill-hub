@@ -3370,3 +3370,62 @@ refreshToken 时同步换新并写回 store；`/oauth/status` 在每次轮询时
 254 用例全绿（新增 `test-oauth-proactive-refresh.mjs` 8 用例：过期续期 / 临期提前续 /
 有效不打扰 / 失败降级 / 无 refreshToken 不尝试 / 并发只续一次 / 过期 expires_in 为 0 /
 端到端 status 轮询触发续期）。
+
+## 0.3.6 免 patch 重构 —— 原生 MCP 连接层（2026-11-08 18:00 - 19:10 CST）
+
+### 起因（用户: 去看竞争对手，抄一点）
+调研了三家：
+
+| 项目 | 同为 dsh 插件 | 是否改官方文件 | OAuth 主动续期 |
+|---|---|---|---|
+| `@guilduo/dsh-oauth-poc` | ✅ | **❌ 不改** | ❌ 无 |
+| `@modelcontextprotocol/inspector` | — | — | ❌ 无（纯 SDK 懒触发） |
+| `mcp-hub` | — | — | ❌ 无（与我们旧实现相同） |
+
+**最有价值的发现不是功能，是架构**：竞品完全不 patch 官方 bundle，而是用公开 API：
+
+```ts
+new StreamableHTTPClientTransport(url, { authProvider })      // SDK 公开构造
+ctx.tools.register(createMcpToolDefinition(ctx, {...}))       // dsh 公开导出
+```
+
+实测确认 `createMcpToolDefinition` 确实是 `@deepseek-ai/dsh-mcp-client` 的公开导出
+（`Config, apply, createMcpToolDefinition, inject, name`）。也就是说**我们那个 seam patch
+从架构上就是多余的**——不需要改官方文件，也就不需要在卸载时还原。
+
+### 重构内容
+- 新增 `lib/native-mcp.js`：自己起 Client + transport + 注册工具，全程公开 API。
+  错误信息只含 serverName 与 host（铁律 6）。工具名归一化沿用 dsh 的
+  `mcp__<server>__<raw>` + 12 位身份哈希，但**判据比 dsh 更严**：dsh 在
+  `normalized === joined` 时不加哈希，导致 `a.b` 与 `a_b` 会撞名；我们只要发生过
+  替换或截断就加哈希，从根上消解碰撞。
+- `inject` 从 `["webServer","skills"]` 扩到 `["webServer","skills","tools"]`。
+- 接管判据：patch 里该行 `disabled: true`（或配置 `nativeTakeover: [...]`），且
+  **dsh 侧必须已 disabled**——否则拒绝接管并告警，因为双注册会让同名工具互相覆盖。
+- `/state` 新增 `native` 字段（active / failed / 每行已注册工具名与失败原因），
+  让「工具没出现」可诊断而不是只能猜。
+
+### 真实环境验证（非模拟）
+```
+[native-mcp:exa] connected
+[native-mcp:exa] tools/list -> 2 tool(s)
+[native-mcp:exa] registered 2/2: mcp__exa__web_search_exa,mcp__exa__web_fetch_exa
+
+/state → native.tools["mcp-exa-search"].registered = 上面两个, failures = []
+
+用真实 ToolDefinition.execute 调用上游 web_search_exa：
+  ✅ 返回 5512 字节真实搜索结果
+```
+带真实 OAuth token 连 Cloudflare MCP 也通过（发现 docs/search/execute/whoami 4 个工具）。
+
+### 踩中并修掉的真 bug
+**`inject` 缺 `tools`**：cordis 的 Context 在未声明 inject 时**拒绝访问服务**并抛
+`cannot get property "tools" without inject`（不是返回 undefined）。这个错误被
+注册循环的 catch 吞掉，表现为「连接成功、tools/list 有 2 个、注册 0 个」——
+工具静默消失。若不是加了 `registered N/M` 诊断日志，这个问题会以「模型时好时坏」
+的形态长期潜伏。已在代码注释中记录该契约。
+
+### 测试
+268 用例全绿（新增 `test-native-mcp.mjs` 14 用例：工具名归一化/碰撞消解、列表
+规范化、buildToolOptions、真实 HTTP MCP 端到端连接+注册+调用、close 注销、401
+优雅失败、authProvider 注入、错误信息不含 query token）。
